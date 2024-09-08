@@ -1,16 +1,19 @@
 #!/usr/bin/python3
 
 import serial.tools.list_ports
-from sys import argv,exit
+from sys import argv,exit,platform
+from glob import glob
+import os
 
 
+def tprint(*s):
+  if trace: print('TRACE:',*s)
 
 def printpair(name,val):
   if val==None: return
   if val=='': return
   if name!='': name+=':'
   print(f'{name:>16} {val}')
-
 
 def getfuseropened(dev):
    if noexec: return ''
@@ -100,7 +103,7 @@ def printerr(*s):
   if verb: print('ERR:',*s)
 
 def printtrace(*s):
-  if trace: print('TRACE:',*s)
+  tprint(*s)
 
 
 # get line containing the string from a list
@@ -219,7 +222,6 @@ def printport(p,links={},bylines=False,all=False,showopen=False):
 
 # read symlinks from list of directories
 def getdirlinks(paths=['/dev','/dev/serial/by-path','/dev/serial/by-id']):
-  import os
   a={}
   for path in paths:
     try:
@@ -250,11 +252,32 @@ def getlinks(portarr):
   return links
 
 
+
+def sys_serial_ports():
+    try: sports=glob('/sys/class/tty/*')
+    except Exception as e:
+      tprint('/sys scan error:',e)
+      return False,[],{}
+    tprint('/sys scan')
+    devs=[]
+    paths={}
+    for sp in sports:
+      if not os.path.islink(sp): continue
+      devpath=os.path.realpath(sp)
+      if not devpath.startswith('/sys/devices/'): continue
+      if devpath.startswith('/sys/devices/virtual/'): continue
+      devname=sp.split('/')[-1]
+      devname='/dev/'+devname
+      devs.append(devname)
+      paths[devname]=devpath
+    if len(devs)==0: return False,[],{} # assume error
+    return True,devs,paths
+
 # list all serial ports by alternative approach
+# returns list of ports, dictionary of device paths
 def alt_serial_ports():
     # from https://stackoverflow.com/questions/12090503/listing-available-com-ports-with-python
     import sys
-    from glob import glob
     """ Lists serial port names
 
         :raises EnvironmentError:
@@ -264,13 +287,23 @@ def alt_serial_ports():
     """
     skipports=['/dev/ttyprintk']
 
-    if sys.platform.startswith('win'):
+    tprint('alt port lookup')
+    res,ports,devpaths=sys_serial_ports()
+    if res: return ports,devpaths,'from alt scan: /sys'
+
+    if platform.startswith('win'):
         ports = ['COM%s' % (i + 1) for i in range(256)]
-    elif sys.platform.startswith('linux') or sys.platform.startswith('cygwin'):
+        scanname='Windows COM'
+        tprint('windows COM ports check')
+    elif platform.startswith('linux') or platform.startswith('cygwin'):
         # this excludes your current terminal "/dev/tty"
         ports = glob('/dev/tty[A-Za-z]*')
-    elif sys.platform.startswith('darwin'):
+        scanname='/dev/tty[A-Za-z]*'
+        tprint('linux /tty check')
+    elif platform.startswith('darwin'):
         ports = glob('/dev/tty.*')
+        scanname='/dev/tty.*'
+        tprint('darwin /tty. check')
     else:
         raise EnvironmentError('Unsupported platform')
 
@@ -282,8 +315,9 @@ def alt_serial_ports():
             s.close()
             result.append(port)
         except (OSError, serial.SerialException):
+            #tprint('exception on',port)
             pass
-    return result
+    return result,{},'from alt scan: '+scanname
 
 
 
@@ -297,29 +331,35 @@ def printports(bylines=False,all=False,showopen=False,altscan=True):
 
   #ports['/dev/ttyAMA0']={'device': '/dev/ttyAMA0', 'name': 'ttyAMA0', 'description': 'ttyAMA0', 'hwid': '107d001000.serial', 'vid': None, 'pid': None, 'serial_number': None, 'location': None, 'manufacturer': None, 'product': None, 'interface': None, 'usb_device_path': None, 'device_path': '/sys/devices/platform/soc/107d001000.serial', 'subsystem': 'amba', 'usb_interface_path': None}
   if altscan:
-    try: altports=alt_serial_ports()
+    try: altports,devpaths,scandesc=alt_serial_ports()
     except: altports=[];print('alt port scan failed')
     for x in altports:
       if x in ports: continue
-      ports[x]={'device':x,'name':x.split('/')[-1],'description':'from alt scan','hwid':'altscan:'+x}
+      ports[x]={'device':x,'name':x.split('/')[-1],'description':scandesc,'hwid':'','device_path':devpaths.get(x)}
 
   links=getlinks(ports)
   for p in sorted(ports): printport(ports[p],links=links,bylines=bylines,all=all,showopen=showopen)
   #getrfcomm()
 
 
-def printaltports():
-  for x in sorted(alt_serial_ports()):
-    print(x)
+def printaltports(paths=False):
+  #print(alt_serial_ports()[0])
+  devs,paths,scanname=alt_serial_ports()
+  for x in sorted(devs):
+    if paths: print(x+'\t'+paths[x])
+    else: print(x)
 
 
 
 def help():
   print("""List serial ports available on the machine.
+Uses python serial.tools.list_ports.comports() scan, augmented with other lookups
+
 Usage: """+argv[0]+""" [-l] [-h]
 Where:
   -l       list format, one port per line
   -L       list by alternative scan
+  -LD      list by alternative scan, with device paths
   -N       skip alternative scan
   -a       show all port properties, alphabetically, no filtering
   -o       show process that has the port opened (call fuser -v)
@@ -337,16 +377,20 @@ noexec=False
 verb=True
 trace=False
 altscan=True
+altlist=False
+altpaths=False
 if len(argv)>1:
   if argv[1] in ['help','-h','--help']: help()
   if '-l' in argv: bylines=True
-  if '-L' in argv: printaltports();exit(0)
+  if '-L' in argv: altlist=True
+  if '-LD' in argv: altlist=True;altpaths=True
   if '-N' in argv: altscan=False
   if '-a' in argv: all=True
   if '-o' in argv: showopen=True
   if '-d' in argv: trace=True
   if '-noexec' in argv: noexec=True
 
+if altlist: printaltports(paths=altpaths);exit(0)
 printports(bylines=bylines,all=all,showopen=showopen,altscan=altscan)
 
 
