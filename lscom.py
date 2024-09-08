@@ -161,37 +161,36 @@ def getrfcommdetails(dev):
 
 # print data about the port
 def printport(p,links={},bylines=False,all=False,showopen=False):
+  #print(dir(p))
   if bylines:
-    try: prod=p.product
-    except: prod=''
-    if prod==None: prod=''
-    if p.name[:6]=='rfcomm':
+#    prod=p.get('product','')
+    if p.get('name','')[:6]=='rfcomm':
       try: a=getrfcommdetails(p.name);prod=a['BT_address']
       except Exception as e: printerr('rfcomm call:',e)
-    print(f'{p.device}|{p.name}|{p.subsystem}|{p.hwid}|{prod}')
+    print(f'{p.get("device")}|{p.get("name")}|{p.get("subsystem")}|{p.get("hwid")}|{p.get("product","")}')
 
   else:
     lval=links.values()
     linked=[]
     for x in links:
-      if links[x]==p.device: linked.append(x)
+      if links[x]==p.get("device"): linked.append(x)
     #print(p.device,linked)
-    if (not all) and (p.device in links): return # skip links
+    if (not all) and (p.get("device") in links): return # skip links
 
-    print(p.device)
+    print(p.get("device"))
     for x in linked: print('=',x)
 
-    if showopen: printpair('OPENED BY',getfuseropened(p.device))
+    if showopen: printpair('OPENED BY',getfuseropened(p.get('device')))
 
-    v=vars(p)
+    v=p
     items=['device','name','subsystem','interface','*age','description','product','manufacturer','serial_number','vid','pid','location','hwid','device_path']
     for x in v:
       if x not in items: items.append(x)
 
     if not all:
-      if p.interface==p.product: items.remove('interface')
-      if p.description==p.name: items.remove('description')
-      if p.interface!=None and p.product!=None and p.description==p.interface+' - '+p.product: items.remove('description')
+      if v.get('interface')==v.get('product'): items.remove('interface')
+      if v.get('description')==v.get('name'): items.remove('description')
+      if v.get('interface')!=None and v.get('product')!=None and v.get('description')==v.get('interface')+' - '+v.get('product'): items.remove('description')
       items.remove('device')
     else:
       items=sorted(items)
@@ -205,7 +204,7 @@ def printport(p,links={},bylines=False,all=False,showopen=False):
       if v[x]==None: continue
       if v[x]=='n/a': continue
       if x=='vid': continue
-      if x=='pid': printpair('VID:PID',f'{p.vid:04x}:{p.pid:04x}');continue
+      if x=='pid': printpair('VID:PID',f'{p.get("vid"):04x}:{p.get("pid"):04x}');continue
       printpair(x,v[x])
 
     if v['name'][:6]=='rfcomm':
@@ -242,26 +241,86 @@ def getlinks(portarr):
 #  except Exception as e:
 #    printerr('warn: getdirlinks() failed:',e)
 #    links={} # SILENT FAIL ERROR
-  for p in portarr:
-    if 'LINK=' not in p.hwid: continue
-    a=p.hwid.split(' ')
-    if a[0][:5]=='LINK=': links[p.device]=a[0][5:]
+  for pdev in portarr:
+    p=portarr[pdev]
+    if 'LINK=' not in p.get('hwid'): continue
+    a=p.get('hwid','').split(' ')
+    if a[0][:5]=='LINK=': links[p.get('device')]=a[0][5:]
+
   return links
 
 
+# list all serial ports by alternative approach
+def alt_serial_ports():
+    # from https://stackoverflow.com/questions/12090503/listing-available-com-ports-with-python
+    import sys
+    from glob import glob
+    """ Lists serial port names
+
+        :raises EnvironmentError:
+            On unsupported or unknown platforms
+        :returns:
+            A list of the serial ports available on the system
+    """
+    skipports=['/dev/ttyprintk']
+
+    if sys.platform.startswith('win'):
+        ports = ['COM%s' % (i + 1) for i in range(256)]
+    elif sys.platform.startswith('linux') or sys.platform.startswith('cygwin'):
+        # this excludes your current terminal "/dev/tty"
+        ports = glob('/dev/tty[A-Za-z]*')
+    elif sys.platform.startswith('darwin'):
+        ports = glob('/dev/tty.*')
+    else:
+        raise EnvironmentError('Unsupported platform')
+
+    result = []
+    for port in ports:
+        if port in skipports: continue
+        try:
+            s = serial.Serial(port)
+            s.close()
+            result.append(port)
+        except (OSError, serial.SerialException):
+            pass
+    return result
+
+
+
+
 # obtain list of ports, read symlinks, print them all
-def printports(bylines=False,all=False,showopen=False):
+def printports(bylines=False,all=False,showopen=False,altscan=True):
   printtrace('getting port list from serial.tools.list_ports.comports()')
-  ports = list(serial.tools.list_ports.comports())
+  ports={}
+  for x in list(serial.tools.list_ports.comports()):
+    ports[x.device]=vars(x)
+
+  #ports['/dev/ttyAMA0']={'device': '/dev/ttyAMA0', 'name': 'ttyAMA0', 'description': 'ttyAMA0', 'hwid': '107d001000.serial', 'vid': None, 'pid': None, 'serial_number': None, 'location': None, 'manufacturer': None, 'product': None, 'interface': None, 'usb_device_path': None, 'device_path': '/sys/devices/platform/soc/107d001000.serial', 'subsystem': 'amba', 'usb_interface_path': None}
+  if altscan:
+    try: altports=alt_serial_ports()
+    except: altports=[];print('alt port scan failed')
+    for x in altports:
+      if x in ports: continue
+      ports[x]={'device':x,'name':x.split('/')[-1],'description':'from alt scan','hwid':'altscan:'+x}
+
   links=getlinks(ports)
-  for p in sorted(ports): printport(p,links=links,bylines=bylines,all=all,showopen=showopen)
+  for p in sorted(ports): printport(ports[p],links=links,bylines=bylines,all=all,showopen=showopen)
   #getrfcomm()
+
+
+def printaltports():
+  for x in sorted(alt_serial_ports()):
+    print(x)
+
+
 
 def help():
   print("""List serial ports available on the machine.
 Usage: """+argv[0]+""" [-l] [-h]
 Where:
   -l       list format, one port per line
+  -L       list by alternative scan
+  -N       skip alternative scan
   -a       show all port properties, alphabetically, no filtering
   -o       show process that has the port opened (call fuser -v)
   -noexec  do not execute any commands as helpers (rfcomm, bluetoothctl)
@@ -277,14 +336,17 @@ showopen=False
 noexec=False
 verb=True
 trace=False
+altscan=True
 if len(argv)>1:
   if argv[1] in ['help','-h','--help']: help()
   if '-l' in argv: bylines=True
+  if '-L' in argv: printaltports();exit(0)
+  if '-N' in argv: altscan=False
   if '-a' in argv: all=True
   if '-o' in argv: showopen=True
   if '-d' in argv: trace=True
   if '-noexec' in argv: noexec=True
 
-printports(bylines=bylines,all=all,showopen=showopen)
+printports(bylines=bylines,all=all,showopen=showopen,altscan=altscan)
 
 

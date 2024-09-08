@@ -62,6 +62,8 @@ List serial ports available on the machine.
 Usage: /usr/bin/lscom [-l] [-h]
 Where:
   -l       list format, one port per line
+  -L       list by alternative scan
+  -N       skip alternative scan
   -a       show all port properties, alphabetically, no filtering
   -o       show process that has the port opened (call fuser -v)
   -noexec  do not execute any commands as helpers (rfcomm, bluetoothctl)
