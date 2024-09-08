@@ -59,10 +59,13 @@ A script in python, using serial.tools.list\_ports to enumerate the ports, chec
 
 ```
 List serial ports available on the machine.
+Uses python serial.tools.list_ports.comports() scan, augmented with other lookups
+
 Usage: /usr/bin/lscom [-l] [-h]
 Where:
   -l       list format, one port per line
   -L       list by alternative scan
+  -LD      list by alternative scan, with device paths
   -N       skip alternative scan
   -a       show all port properties, alphabetically, no filtering
   -o       show process that has the port opened (call fuser -v)
